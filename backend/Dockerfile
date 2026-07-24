@@ -14,9 +14,9 @@ WORKDIR /app
 # Native build deps for better-sqlite3 (compiles from C++ addon)
 RUN apk add --no-cache python3 make g++
 
-# Full install: all deps including type-safety and Prisma CLI
+# Full install: all deps including type-safety and Prisma CLI, then apply security patches
 COPY package*.json tsconfig.json ./
-RUN npm ci && npm cache clean --force
+RUN npm ci && npm audit fix --audit-level=moderate && npm cache clean --force
 
 # Generate Prisma client at build time (default: sqlite).
 # The schema has `provider = "sqlite"` hardcoded because Prisma does not
@@ -52,6 +52,7 @@ WORKDIR /app
 COPY --chown=node:0 --from=builder /app/package*.json ./
 COPY --chown=node:0 --from=builder /app/node_modules ./node_modules
 COPY --chown=node:0 --from=builder /app/dist ./dist
+COPY --chown=node:0 --from=builder /app/src/generated ./dist/generated
 COPY --chown=node:0 --from=builder /app/prisma ./prisma
 
 # Create writable directories and set up entrypoint

@@ -11,9 +11,9 @@ FROM ${BUILD_IMAGE} AS builder
 
 WORKDIR /app/frontend
 
-# Install all dependencies (Vite, React, etc.)
+# Install all dependencies and apply security patches (non-breaking only)
 COPY frontend/package*.json ./
-RUN npm ci && npm cache clean --force
+RUN npm ci && npm audit fix 2>&1 || true && npm cache clean --force
 
 # Copy source, config, and version metadata
 COPY frontend/ ./
@@ -55,8 +55,7 @@ EXPOSE 8080
 # Default backend (override in Helm / compose with BACKEND_URL env var)
 ENV BACKEND_URL=excalidash-backend:8000
 
-# CMD is just nginx.
-# The entrypoint (/docker-entrypoint.sh) auto-runs scripts in
-# /docker-entrypoint.d/ (including 40-excalidash-config.sh) before
-# starting nginx. No need to manually invoke the config script here.
-CMD ["nginx", "-g", "daemon off;"]
+# The ib-nginx:alpine image comes from Alpine's apk package, which does not
+# have the standard nginx Docker entrypoint with /docker-entrypoint.d/ support.
+# We must run our config generation script explicitly before starting nginx.
+CMD ["/bin/sh", "-c", "/docker-entrypoint.d/40-excalidash-config.sh && exec nginx -g 'daemon off;'"]
