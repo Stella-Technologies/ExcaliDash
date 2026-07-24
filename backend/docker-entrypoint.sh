@@ -46,4 +46,12 @@ fi
 echo "[entrypoint] Provider: ${DATABASE_PROVIDER:-sqlite}"
 echo "[entrypoint] Environment: ${NODE_ENV:-development}"
 
+# Push schema to database (creates tables for SQLite/PostgreSQL on first run).
+# In production on AKS, this is handled by the Helm migration Job.
+# We only do this in development/non-production to ease local testing.
+if [ "${NODE_ENV}" != "production" ]; then
+    echo "[entrypoint] Running prisma db push (dev mode)..."
+    npx prisma db push --schema=/app/prisma/schema.prisma --accept-data-loss 2>&1 || true
+fi
+
 exec node dist/index.js
