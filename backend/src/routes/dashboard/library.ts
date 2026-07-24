@@ -1,5 +1,30 @@
 import express from "express";
+import fs from "fs";
+import path from "path";
 import { DashboardRouteDeps } from "./types";
+
+const DEFAULT_LIBRARY_PATH = path.resolve(__dirname, "../../../default_library.json");
+
+let cachedDefaultLibrary: unknown[] | null = null;
+
+const loadDefaultLibrary = (): unknown[] => {
+  if (cachedDefaultLibrary) return cachedDefaultLibrary;
+  try {
+    const raw = fs.readFileSync(DEFAULT_LIBRARY_PATH, "utf8");
+    const parsed = JSON.parse(raw);
+    if (parsed.type === "excalidrawlib" && Array.isArray(parsed.items)) {
+      cachedDefaultLibrary = parsed.items;
+      return cachedDefaultLibrary;
+    }
+    console.warn("[library] default_library.json has unexpected format");
+    return [];
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+      console.warn("[library] Failed to load default_library.json:", error);
+    }
+    return [];
+  }
+};
 
 export const registerLibraryRoutes = (
   app: express.Express,
@@ -12,7 +37,10 @@ export const registerLibraryRoutes = (
 
     const libraryId = `user_${req.user.id}`;
     const library = await prisma.library.findUnique({ where: { id: libraryId } });
-    if (!library) return res.json({ items: [] });
+    if (!library) {
+      const defaultItems = loadDefaultLibrary();
+      return res.json({ items: defaultItems });
+    }
 
     return res.json({ items: parseJsonField(library.items, []) });
   }));

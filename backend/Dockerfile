@@ -57,8 +57,8 @@ COPY --chown=node:0 --from=builder /app/prisma ./prisma
 # Create writable directories and set up entrypoint
 USER root
 RUN mkdir -p uploads prisma backups && chown -R node:0 /app
-COPY docker-entrypoint.sh ./
-RUN chmod +x docker-entrypoint.sh && chown node:0 docker-entrypoint.sh
+COPY docker-entrypoint.sh default_library.json ./
+RUN chmod +x docker-entrypoint.sh && chown node:0 docker-entrypoint.sh default_library.json
 USER node
 
 # Default database provider (override in Helm ConfigMap for PG on AKS)
