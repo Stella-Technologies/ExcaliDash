@@ -1,0 +1,44 @@
+# docker-compose.test.yml
+# Override for testing the ironbank-built images locally.
+# Uses pre-built images, no source build required.
+# Project name "excalidash" to isolate from other compose projects.
+
+services:
+  backend:
+    image: excalidash-backend:ironbank
+    container_name: excalidash-test-backend
+    environment:
+      - NODE_ENV=development
+      - PORT=8000
+      - AUTH_MODE=local
+      - TRUST_PROXY=false
+      - JWT_SECRET=test-jwt-secret-32-chars-minimum-value-xx
+      - CSRF_SECRET=test-csrf-secret-32-chars-minimum-value-xx
+      - DATABASE_URL=file:/app/prisma/dev.db
+      - DATABASE_PROVIDER=sqlite
+      - DISABLE_ONBOARDING_GATE=true
+    volumes:
+      - excalidash-test-data:/app/prisma
+    networks:
+      - excalidash-test-network
+    restart: "no"
+
+  frontend:
+    image: excalidash-frontend:ironbank
+    container_name: excalidash-test-frontend
+    ports:
+      - "6767:8080"
+    environment:
+      - BACKEND_URL=backend:8000
+    depends_on:
+      - backend
+    networks:
+      - excalidash-test-network
+    restart: "no"
+
+networks:
+  excalidash-test-network:
+    driver: bridge
+
+volumes:
+  excalidash-test-data:

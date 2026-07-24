@@ -54,6 +54,15 @@ const buildEmptyScene = () => ({
   scrollToContent: true,
 });
 
+const fetchLibraryItems = (user: unknown): Promise<any[]> => {
+  return user
+    ? api.getLibrary().catch((err) => {
+        console.warn("Failed to load library, using empty:", err);
+        return [];
+      })
+    : Promise.resolve([]);
+};
+
 export const useEditorSceneLoader = ({
   id,
   user,
@@ -95,17 +104,16 @@ export const useEditorSceneLoader = ({
 
     const loadData = async () => {
       if (!id) {
-        setInitialData(buildEmptyScene());
+        const libraryItems = await fetchLibraryItems(user);
+        setInitialData({
+          ...buildEmptyScene(),
+          libraryItems: libraryItems,
+        });
         setIsSceneLoading(false);
         return;
       }
       try {
-        const libraryItemsPromise = user
-          ? api.getLibrary().catch((err) => {
-              console.warn("Failed to load library, using empty:", err);
-              return [];
-            })
-          : Promise.resolve([]);
+        const libraryItemsPromise = fetchLibraryItems(user);
         const [data, libraryItems] = await Promise.all([
           api.getDrawing(id),
           libraryItemsPromise,
