@@ -1,0 +1,150 @@
+# ========================================
+# ExcaliDash Production Values (corporate)
+# ========================================
+# Usage:
+#   helm install excalidash ./charts/excalidash \
+#     -f ./charts/excalidash/values.yaml \
+#     -f ./charts/excalidash/values.production.yaml
+#
+# This override assumes:
+#   - AKS with Azure Key Vault CSI for secrets
+#   - Azure Database for PostgreSQL Flexible Server
+#   - cert-manager for TLS certificates
+#   - Azure Application Gateway or NGINX Ingress Controller
+
+# ---- Pin image versions (NEVER use :latest in production) ----
+backend:
+  replicaCount: 2
+  image:
+    tag: "v22.23.1"           # Pin to Iron Bank nodejs22-slim tag
+
+  # PostgreSQL for multi-replica on AKS
+  env:
+    NODE_ENV: production
+
+  config:
+    frontendUrl: "https://excalidash.corp.example.com"
+    trustProxy: true           # AKS ingress sets X-Forwarded-* headers
+    authMode: hybrid             # local | hybrid | oidc_enforced
+    enablePasswordReset: true
+    enableRefreshTokenRotation: true
+    enableAuditLogging: true
+    enforceHttpsRedirect: false  # AKS ingress handles TLS redirects
+    rateLimitMaxRequests: "1000"
+    csrfMaxRequests: "60"
+
+  secretProvider:
+    enabled: true
+    keyVaultName: "corp-excalidash-kv"
+    tenantId: "00000000-0000-0000-0000-000000000000"  # Replace
+    secrets:
+      - vaultSecret: excalidash-jwt-secret
+        envVar: JWT_SECRET
+      - vaultSecret: excalidash-csrf-secret
+        envVar: CSRF_SECRET
+      - vaultSecret: excalidash-api-key-pepper
+        envVar: API_KEY_HASH_PEPPER
+
+  persistence:
+    enabled: false            # PostgreSQL, not SQLite
+
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 70
+
+frontend:
+  replicaCount: 2
+  image:
+    tag: "1.30.3"             # Pin to Iron Bank nginx-alpine tag
+
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 70
+
+# Use managed PostgreSQL (Azure Database for PostgreSQL Flexible Server)
+postgresql:
+  enabled: true
+  host: "corp-excalidash-pg.postgres.database.azure.com"
+  port: 5432
+  database: excalidash
+  username: excalidash_app
+
+  # Password from Azure Key Vault CSI:
+  #   - Add "excalidash-db-password" to secretProvider secrets above
+  #   - Map to PGPASSWORD env var in the migration Job
+  #   - Or set via --set postgresql.password='...' (not recommended for production)
+
+# Enable migration Job (Helm hook)
+migration:
+  enabled: true
+
+# ---- Ingress (TLS via cert-manager) ----
+ingress:
+  enabled: true
+  className: "webapprouting.kubernetes.azure.com"  # AKS App Routing add-on
+  annotations:
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/proxy-body-size: "50m"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "300"
+    # Rate limiting at ingress level
+    nginx.ingress.kubernetes.io/limit-rps: "50"
+    nginx.ingress.kubernetes.io/limit-connections: "100"
+  hosts:
+    - host: excalidash.corp.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - hosts:
+        - excalidash.corp.example.com
+      secretName: excalidash-tls
+
+# ---- Network Policy (defense-in-depth) ----
+networkPolicy:
+  enabled: true
+  backend:
+    ingressFromFrontend: true
+    egressDns: true           # For OIDC discovery + update check
+  frontend:
+    ingressFromIngress: true  # Allow ingress-controller traffic
+
+# ---- Service Account with Workload Identity ----
+serviceAccount:
+  create: true
+  annotations:
+    azure.workload.identity/client-id: "00000000-0000-0000-0000-000000000000"  # Replace with managed identity client ID
+
+# ---- Image Pull Secret for Iron Bank ----
+imagePullSecrets:
+  - name: ironbank-registry
+
+# ---- Pod Disruption Budget ----
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+
+# ---- Pod anti-affinity (spread across nodes) ----
+affinity:
+  podAntiAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        podAffinityTerm:
+          labelSelector:
+            matchExpressions:
+              - key: app.kubernetes.io/name
+                operator: In
+                values:
+                  - excalidash
+          topologyKey: kubernetes.io/hostname
+
+# ---- Node selector for dedicated pool (optional) ----
+# nodeSelector:
+#   agentpool: excalidash
+# tolerations:
+#   - key: "CriticalAddonsOnly"
+#     operator: "Exists"

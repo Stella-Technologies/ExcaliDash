@@ -1,3 +1,5 @@
+import DOMPurify from "dompurify";
+
 const parseDimension = (value: string | null): number | null => {
   if (!value) return null;
   const parsed = Number.parseFloat(value);
@@ -65,6 +67,33 @@ export const previewHasEmbeddedImages = (
   preview: string | null | undefined
 ): boolean => typeof preview === "string" && /<image[\s>]/i.test(preview);
 
+const sanitizePreviewSvg = (svgContent: string): string => {
+  return DOMPurify.sanitize(svgContent, {
+    USE_PROFILES: { svg: true },
+    ALLOWED_TAGS: [
+      "svg", "defs", "pattern", "g", "image", "rect", "circle",
+      "ellipse", "line", "polyline", "polygon", "path", "text", "tspan",
+    ],
+    ALLOWED_ATTR: [
+      "xmlns", "xmlns:xlink", "viewBox", "preserveAspectRatio",
+      "x", "y", "width", "height", "cx", "cy", "r", "rx", "ry",
+      "x1", "y1", "x2", "y2", "points", "d",
+      "fill", "fill-opacity", "stroke", "stroke-width", "stroke-opacity",
+      "stroke-linecap", "stroke-linejoin", "opacity", "transform",
+      "font-size", "font-family", "font-weight", "text-anchor",
+      "dominant-baseline", "href", "xlink:href",
+    ],
+    FORBID_TAGS: [
+      "script", "foreignObject", "iframe", "object", "embed",
+      "style", "link", "use",
+    ],
+    FORBID_ATTR: [
+      "onload", "onclick", "onerror", "onmouseover", "onfocus",
+      "onblur", "src", "action",
+    ],
+  });
+};
+
 export const normalizePreviewSvg = (preview: string | null | undefined): string | null => {
   if (typeof preview !== "string" || preview.trim().length === 0) {
     return preview ?? null;
@@ -101,7 +130,7 @@ export const normalizePreviewSvg = (preview: string | null | undefined): string 
 
     maybeRepairFlattenedImagePreview(svg as unknown as SVGSVGElement);
 
-    return svg.outerHTML;
+    return sanitizePreviewSvg(svg.outerHTML);
   } catch {
     return preview;
   }

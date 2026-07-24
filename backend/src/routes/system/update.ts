@@ -184,6 +184,7 @@ export const __setUpdateTtlForTests = (ttlMs: number): void => {
 export const registerUpdateRoutes = (app: express.Express, deps: SystemRouteDeps) => {
   app.get(
     "/system/update",
+    deps.optionalAuth,
     deps.asyncHandler(async (req, res) => {
       const channel = parseChannel(req.query.channel);
       const currentVersion = deps.getBackendVersion() || null;

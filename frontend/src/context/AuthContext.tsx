@@ -45,6 +45,27 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 const USER_KEY = 'excalidash-user';
 const AUTH_ENABLED_CACHE_KEY = "excalidash-auth-enabled";
 
+type StoredUser = { id: string; role?: string };
+
+const storeUser = (u: User) => {
+  const slim: StoredUser = { id: u.id, role: u.role };
+  localStorage.setItem(USER_KEY, JSON.stringify(slim));
+};
+
+const getStoredUser = (): StoredUser | null => {
+  try {
+    const raw = localStorage.getItem(USER_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (typeof parsed?.id === "string") {
+      return { id: parsed.id, role: typeof parsed.role === "string" ? parsed.role : undefined };
+    }
+    return null;
+  } catch {
+    return null;
+  }
+};
+
 export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
@@ -136,22 +157,16 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       // Loading a stale localStorage user causes "logged-in" UI while the server returns 401s,
       // which in turn triggers noisy refresh attempts and failing library saves.
       if (!isShareFlow) {
-        const storedUser = localStorage.getItem(USER_KEY);
+        const storedUser = getStoredUser();
         if (storedUser) {
-          try {
-            const userData = JSON.parse(storedUser);
-            setUser(userData);
-          } catch {
-            localStorage.removeItem(USER_KEY);
-            setUser(null);
-          }
+          setUser({ id: storedUser.id, role: storedUser.role, email: "", name: "" });
         }
       }
 
       try {
         const response = await authMe();
         setUser(response.user);
-        localStorage.setItem(USER_KEY, JSON.stringify(response.user));
+        storeUser(response.user);
       } catch {
         if (isShareFlow) {
           localStorage.removeItem(USER_KEY);
@@ -162,7 +177,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
           await authRefresh();
           const userResponse = await authMe();
           setUser(userResponse.user);
-          localStorage.setItem(USER_KEY, JSON.stringify(userResponse.user));
+          storeUser(userResponse.user);
         } catch {
           localStorage.removeItem(USER_KEY);
           setUser(null);
@@ -193,7 +208,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
       const { user: userData } = response;
 
-      localStorage.setItem(USER_KEY, JSON.stringify(userData));
+      storeUser(userData);
 
       setAuthStatusError(null);
       setAuthEnabled(true);
@@ -222,7 +237,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
       const { user: userData } = response;
 
-      localStorage.setItem(USER_KEY, JSON.stringify(userData));
+      storeUser(userData);
 
       setAuthStatusError(null);
       setAuthEnabled(true);

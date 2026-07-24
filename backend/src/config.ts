@@ -16,6 +16,23 @@ export { buildPasswordPolicyMessage, validatePasswordAgainstPolicy };
 
 dotenv.config();
 
+interface ComposeRedisSentinel {
+  host: string;
+  port: number;
+}
+
+interface RedisConfig {
+  enabled: boolean;
+  url: string | null;
+  host: string;
+  port: number;
+  password: string | null;
+  db: number;
+  tls: boolean;
+  sentinels: ComposeRedisSentinel[] | null;
+  sentinelName: string | null;
+}
+
 interface S3Config {
   bucket: string | null;
   region: string;
@@ -44,6 +61,7 @@ interface Config {
   rateLimitMaxRequests: number;
   csrfMaxRequests: number;
   csrfSecret: string | null;
+  apiKeyHashPepper: string | null;
   oidc: OidcConfig;
   enablePasswordReset: boolean;
   enableRefreshTokenRotation: boolean;
@@ -54,6 +72,7 @@ interface Config {
   passwordPolicy: PasswordPolicyConfig;
   backups: BackupConfig;
   s3: S3Config;
+  redis: RedisConfig;
 }
 
 export type AuthMode = "local" | "hybrid" | "oidc_enforced";
@@ -335,6 +354,31 @@ const resolveBackupConfig = (): BackupConfig => {
   };
 };
 
+const resolveRedisConfig = (): RedisConfig => {
+  const url = getOptionalTrimmedEnv("REDIS_URL");
+  const host = getOptionalEnv("REDIS_HOST", "127.0.0.1");
+  const portRaw = getOptionalEnv("REDIS_PORT", "6379");
+  const port = Number.parseInt(portRaw, 10);
+  const password = getOptionalTrimmedEnv("REDIS_PASSWORD");
+  const dbRaw = Number.parseInt(getOptionalEnv("REDIS_DB", "0"), 10);
+  const db = Number.isFinite(dbRaw) ? dbRaw : 0;
+  const tls = getOptionalEnv("REDIS_TLS", "false").trim().toLowerCase() === "true";
+  const enabled = Boolean(url) || getOptionalBoolean("REDIS_ENABLED", false);
+
+  let sentinels: ComposeRedisSentinel[] | null = null;
+  let sentinelName: string | null = null;
+  const sentinelHosts = getOptionalTrimmedEnv("REDIS_SENTINEL_HOSTS");
+  if (sentinelHosts) {
+    sentinels = sentinelHosts.split(",").map((entry) => {
+      const [h, p = "26379"] = entry.trim().split(":");
+      return { host: h, port: Number.parseInt(p, 10) || 26379 };
+    });
+    sentinelName = getOptionalTrimmedEnv("REDIS_SENTINEL_NAME");
+  }
+
+  return { enabled, url, host, port, password, db, tls, sentinels, sentinelName };
+};
+
 const resolvedAuthMode = parseAuthMode(process.env.AUTH_MODE);
 
 const resolveS3Config = (): S3Config => ({
@@ -359,6 +403,7 @@ export const config: Config = {
   rateLimitMaxRequests: getRequiredEnvNumber("RATE_LIMIT_MAX_REQUESTS", 1000),
   csrfMaxRequests: getRequiredEnvNumber("CSRF_MAX_REQUESTS", 60),
   csrfSecret: process.env.CSRF_SECRET || null,
+  apiKeyHashPepper: getOptionalTrimmedEnv("API_KEY_HASH_PEPPER"),
   oidc: resolveOidcConfig(resolvedAuthMode),
   enablePasswordReset: getOptionalBoolean("ENABLE_PASSWORD_RESET", false),
   enableRefreshTokenRotation: getOptionalBoolean(
@@ -378,6 +423,7 @@ export const config: Config = {
   passwordPolicy: resolvePasswordPolicyConfig(getRequiredEnvNumber, getOptionalBoolean),
   backups: resolveBackupConfig(),
   s3: resolveS3Config(),
+  redis: resolveRedisConfig(),
 };
 
 if (config.nodeEnv === "production") {

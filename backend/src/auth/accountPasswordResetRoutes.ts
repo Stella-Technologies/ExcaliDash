@@ -63,18 +63,6 @@ export const registerAccountPasswordResetRoutes = (
             userAgent: req.headers["user-agent"] || undefined,
           });
         }
-
-        if (config.nodeEnv === "development") {
-          console.log(`[DEV] Password reset token for ${email}: ${resetToken}`);
-          const baseUrlRaw = config.frontendUrl?.split(",")[0]?.trim();
-          const baseUrlWithProtocol = baseUrlRaw
-            ? /^https?:\/\//i.test(baseUrlRaw)
-              ? baseUrlRaw
-              : `http://${baseUrlRaw}`
-            : "http://localhost:6767";
-          const baseUrl = baseUrlWithProtocol.replace(/\/$/, "");
-          console.log(`[DEV] Reset URL: ${baseUrl}/reset-password-confirm?token=${resetToken}`);
-        }
       }
 
       return res.json({

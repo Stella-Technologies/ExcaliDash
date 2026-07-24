@@ -306,6 +306,77 @@ Common flags:
 
 </details>
 
+## Corporate Fork — Hardened Build with Iron Bank Base Images
+
+This fork adds 8 security fixes, Iron Bank-compatible hardened base images, a Helm chart for AKS deployment, and Redis-backed rate limiting for multi-replica deployments.
+
+### Security Fixes Applied
+
+| ID | Severity | Fix |
+|----|----------|-----|
+| C1 | CRITICAL | Client-side DOMPurify sanitization on SVG previews before `dangerouslySetInnerHTML` |
+| C2 | CRITICAL | Container runs as non-root (backend: UID 1000, frontend: UID 101) |
+| C3 | CRITICAL | Bootstrap setup code no longer logged in plaintext (hash prefix only) |
+| H1 | HIGH | `/system/update` now requires authentication |
+| H2 | HIGH | CSRF middleware applies to all routes (defense-in-depth) |
+| H3 | HIGH | Dev-mode password reset token logging removed |
+| H4 | HIGH | `API_KEY_HASH_PEPPER` required in production config validation |
+| M1 | MEDIUM | PII minimized in localStorage (only `{id, role}` stored) |
+| M4 | HIGH | Redis-backed rate limiting for multi-replica AKS |
+
+### Base Images
+
+Instead of `node:20-alpine` and `nginx:alpine`, the runtime images are built on hardened Alpine 3.24 with rootless users:
+
+| Image | Base | User | Purpose |
+|-------|------|------|---------|
+| `ib-alpine:3.24` | Public `alpine:3.24` with OpenSSL | root | Hardened base |
+| `ib-nodejs:22` | `ib-alpine` + Node 22 binary from public image | UID 1000 (`node`) | Backend runtime |
+| `ib-nginx:alpine` | `ib-alpine` + nginx from Alpine repos | UID 101 (`nginx`) | Frontend runtime, port 8080 |
+
+Build locally:
+```bash
+# Requires: ~/ironbank-repos/alpine_3.24, ./nodejs22-slim, ./nginx-alpine
+# Or uses fallback builds from public images
+sh scripts/build-ironbank.sh
+sh scripts/build-excalidash.sh --ironbank
+```
+
+### AKS Helm Chart
+
+The `charts/excalidash/` directory contains a production-ready Helm chart:
+
+```
+charts/excalidash/
+├── Chart.yaml
+├── values.yaml
+├── values.production.yaml
+└── templates/
+    ├── backend-deployment.yaml      # Non-root, seccomp, resource limits, CSI secrets
+    ├── backend-service.yaml
+    ├── frontend-deployment.yaml     # Port 8080, non-root, seccomp
+    ├── frontend-service.yaml
+    ├── ingress.yaml                 # TLS, cert-manager, rate limiting
+    ├── networkpolicy.yaml           # Default deny, allow frontend→backend
+    ├── secret-provider.yaml         # Azure Key Vault CSI
+    ├── configmap.yaml               # Non-secret env vars
+    ├── migration-job.yaml           # prisma migrate deploy (Helm hook)
+    ├── serviceaccount.yaml          # Workload identity
+    └── pvc.yaml                     # SQLite (disabled for PostgreSQL)
+```
+
+Deploy:
+```bash
+helm install excalidash ./charts/excalidash \
+  -f ./charts/excalidash/values.yaml \
+  -f ./charts/excalidash/values.production.yaml
+```
+
+### Dependency Changes
+
+- **Backend:** Added `ioredis` (Redis-backed rate limiting)
+- **Frontend:** Added `dompurify` + `@types/dompurify` (client-side XSS prevention)
+
 # Credits
 If you find ExcaliDash useful, please consider [sponsoring](https://github.com/sponsors/ZimengXiong)
 - Example designs from:

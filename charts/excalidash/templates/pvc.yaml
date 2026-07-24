@@ -1,0 +1,17 @@
+{{- if and (not .Values.postgresql.enabled) .Values.backend.persistence.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "excalidash.backend.fullname" . }}-data
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "excalidash.labels" . | nindent 4 }}
+    app.kubernetes.io/component: backend
+spec:
+  accessModes:
+    - {{ .Values.backend.persistence.accessMode }}
+  storageClassName: {{ .Values.backend.persistence.storageClass | quote }}
+  resources:
+    requests:
+      storage: {{ .Values.backend.persistence.size }}
+{{- end }}

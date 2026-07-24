@@ -1,72 +1,74 @@
-# Build stage
-FROM node:20-alpine AS builder
+# ============================================
+# ExcaliDash Backend Dockerfile
+# Public images by default; add --build-arg for Iron Bank
+# ============================================
+
+# ---- Build stage (public image, always available) ----
+ARG BUILD_IMAGE=node:22-alpine
+ARG RUNTIME_IMAGE=node:22-alpine
+
+FROM ${BUILD_IMAGE} AS builder
 
 WORKDIR /app
 
-# Native build deps for modules that may compile from source (e.g., better-sqlite3 on arm64)
+# Native build deps for better-sqlite3 (compiles from C++ addon)
 RUN apk add --no-cache python3 make g++
 
-# Copy package files
-COPY package*.json ./
-COPY tsconfig.json ./
-
-# Install dependencies
+# Full install: all deps including type-safety and Prisma CLI
+COPY package*.json tsconfig.json ./
 RUN npm ci && npm cache clean --force
 
-# Copy prisma schema
+# Generate Prisma client at build time (default: sqlite).
+# The schema has `provider = "sqlite"` hardcoded because Prisma does not
+# support env() in the provider field (only in the url field).
+# For PostgreSQL, the Helm migration Job handles:
+#   1. sed swap of provider in schema.prisma
+#   2. npx prisma generate
+#   3. npx prisma migrate deploy
 COPY prisma ./prisma/
-
-# Set default provider for build-time Prisma generation (runtime can override via DATABASE_PROVIDER)
-RUN sed -i '/datasource db {/,/}/ s/provider = env("[^"]*")/provider = "sqlite"/; /datasource db {/,/}/ s/provider = "[^"]*"/provider = "sqlite"/' prisma/schema.prisma
-
-# Generate Prisma Client at build time (for TypeScript compilation)
-# Runtime will regenerate if DATABASE_PROVIDER differs
+ENV DATABASE_PROVIDER=sqlite
 RUN npx prisma generate
 
-# Copy source code
+# Compile TypeScript
 COPY src ./src
-
-# Build TypeScript
 RUN npx tsc
 
-# Production stage
-FROM node:20-alpine
+# Strip dev-only packages from node_modules so we only ship
+# production dependencies in the runtime image (smaller, safer).
+RUN npm prune --production
 
-# Install runtime packages and create non-root user
-RUN apk add --no-cache openssl su-exec && \
-    addgroup -g 1001 -S nodejs && \
-    adduser -S nodejs -u 1001
+# ---- Runtime stage ----
+# Use --build-arg RUNTIME_IMAGE=registry1.dso.mil/ironbank/opensource/nodejs/nodejs-slim/nodejs22-slim:latest
+# for Iron Bank production builds.
+# (RUNTIME_IMAGE ARG is declared at the top of this file, before the first FROM)
+
+FROM ${RUNTIME_IMAGE}
 
 WORKDIR /app
 
-# Copy package files
-COPY package*.json ./
+# All supported images have user 'node' (UID 1000).
+# Iron Bank slim has 'node' in group 0 (root group).
+# Set files to UID 1000 / GID 0 for maximum compatibility.
+COPY --chown=node:0 --from=builder /app/package*.json ./
+COPY --chown=node:0 --from=builder /app/node_modules ./node_modules
+COPY --chown=node:0 --from=builder /app/dist ./dist
+COPY --chown=node:0 --from=builder /app/prisma ./prisma
 
-# Install production dependencies only
-RUN apk add --no-cache --virtual .build-deps python3 make g++ && \
-    npm ci --omit=dev && \
-    npm cache clean --force && \
-    apk del .build-deps
-
-# Copy prisma schema and migrations for runtime and hydration template
-COPY prisma ./prisma/
-COPY prisma ./prisma_template/
-
-# Copy built application from builder
-COPY --from=builder /app/dist ./dist
-
-# Copy the generated Prisma Client from builder (will be regenerated at runtime if provider changes)
-COPY --from=builder /app/src/generated ./dist/generated
-
-# Create necessary directories (ownership will be set in entrypoint)
-RUN mkdir -p /app/uploads /app/prisma
-
-# Copy and set permissions for entrypoint script
+# Create writable directories and set up entrypoint
+USER root
+RUN mkdir -p uploads prisma backups && chown -R node:0 /app
 COPY docker-entrypoint.sh ./
-RUN chmod +x docker-entrypoint.sh
+RUN chmod +x docker-entrypoint.sh && chown node:0 docker-entrypoint.sh
+USER node
 
-# REMOVED: USER nodejs (We must stay root to fix permissions in entrypoint)
+# Default database provider (override in Helm ConfigMap for PG on AKS)
+ENV DATABASE_PROVIDER=sqlite
 
 EXPOSE 8000
+
+# Non-root user
+#   - node:22-alpine:     USER node (UID 1000)
+#   - Iron Bank slim:     USER node:0 (UID 1000, group 0)
+USER node
 
 ENTRYPOINT ["./docker-entrypoint.sh"]

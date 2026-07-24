@@ -5,5 +5,9 @@ dist
 .gitignore
 *.md
 .env
+.env.*
+*.pem
+*.key
+.npmrc
 .DS_Store
 *.log

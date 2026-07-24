@@ -1,0 +1,277 @@
+# ============================
+# ExcaliDash Helm Chart Values
+# ============================
+# See values.production.yaml for a hardened corporate production override.
+
+# Global settings
+nameOverride: ""
+fullnameOverride: ""
+
+# Image pull secret for registry1.dso.mil (Iron Bank registry)
+imagePullSecrets:
+  - name: ironbank-registry
+
+# ---- Backend ----
+backend:
+  component: backend
+  replicaCount: 1          # Set to 2+ in production
+
+  image:
+    registry: registry1.dso.mil
+    repository: ironbank/opensource/nodejs/nodejs-slim/nodejs22-slim
+    tag: latest              # Pin to a specific tag in production!
+    pullPolicy: IfNotPresent
+
+  # Iron Bank image already runs as non-root (UID 1000)
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+    runAsGroup: 0
+    fsGroup: 0
+    seccompProfile:
+      type: RuntimeDefault
+
+  securityContext:
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: false  # /app/uploads needs write; mount as emptyDir
+    runAsNonRoot: true
+    runAsUser: 1000
+    capabilities:
+      drop: ["ALL"]
+
+  service:
+    type: ClusterIP
+    port: 8000
+    targetPort: 8000
+
+  resources:
+    requests:
+      cpu: 250m
+      memory: 256Mi
+    limits:
+      cpu: 1000m
+      memory: 512Mi
+
+  # Environment variables (non-secret only; secrets via CSI)
+  env:
+    NODE_ENV: production
+    PORT: "8000"
+    AUTH_MODE: local
+
+  # CSI Secret Provider: Azure Key Vault
+  secretProvider:
+    enabled: false         # Set to true and configure below
+    keyVaultName: ""       # Azure Key Vault name
+    tenantId: ""           # Azure tenant ID
+    secrets:               # MapVKey Vault secret name -> env variable
+      - vaultSecret: excalidash-jwt-secret
+        envVar: JWT_SECRET
+      - vaultSecret: excalidash-csrf-secret
+        envVar: CSRF_SECRET
+      - vaultSecret: excalidash-api-key-pepper
+        envVar: API_KEY_HASH_PEPPER
+
+  # Config settings (exposed as ConfigMap)
+  config:
+    frontendUrl: ""        # Set in production override
+    trustProxy: false
+    authMode: local
+    enablePasswordReset: false
+    enableRefreshTokenRotation: true
+    enableAuditLogging: true
+    enforceHttpsRedirect: true
+    rateLimitMaxRequests: "1000"
+    csrfMaxRequests: "60"
+    jwtAccessExpiresIn: 15m
+    jwtRefreshExpiresIn: 7d
+    bootstrapSetupCodeTtlMs: "900000"
+    bootstrapSetupCodeMaxAttempts: "10"
+    drawingsCacheTtlMs: "5000"
+
+  # Auto-scaling
+  autoscaling:
+    enabled: false
+    minReplicas: 2
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 80
+
+  # Health probes
+  livenessProbe:
+    httpGet:
+      path: /health
+      port: 8000
+    initialDelaySeconds: 10
+    periodSeconds: 30
+    timeoutSeconds: 5
+    failureThreshold: 3
+
+  readinessProbe:
+    httpGet:
+      path: /health
+      port: 8000
+    initialDelaySeconds: 5
+    periodSeconds: 10
+    timeoutSeconds: 3
+    failureThreshold: 3
+
+  # Volumes
+  persistence:
+    enabled: true            # Required for SQLite; false when using PostgreSQL
+    storageClass: ""         # Use default StorageClass for Azure Disk
+    size: 10Gi
+    accessMode: ReadWriteOnce  # Must be RWO for SQLite
+
+  # Temporary directories
+  tmpVolumeSizeLimit: 100Mi
+
+# ---- Frontend ----
+frontend:
+  component: frontend
+  replicaCount: 1          # Set to 2+ in production
+
+  image:
+    registry: registry1.dso.mil
+    repository: ironbank/opensource/nginx/nginx-alpine
+    tag: latest              # Pin to a specific tag in production!
+    pullPolicy: IfNotPresent
+
+  # Iron Bank nginx runs as non-root (UID 101)
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 101
+    runAsGroup: 101
+    fsGroup: 101
+    seccompProfile:
+      type: RuntimeDefault
+
+  securityContext:
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: false  # nginx needs writable /var/cache/nginx
+    runAsNonRoot: true
+    runAsUser: 101
+    capabilities:
+      drop: ["ALL"]
+
+  service:
+    type: ClusterIP
+    port: 80                 # Service port exposed to cluster
+    targetPort: 8080         # Iron Bank nginx listens on 8080
+
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+
+  # Backend connection
+  backendUrl: ""
+
+  # Auto-scaling
+  autoscaling:
+    enabled: false
+    minReplicas: 2
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 80
+
+  # Health probe
+  livenessProbe:
+    httpGet:
+      path: /
+      port: 8080
+    initialDelaySeconds: 5
+    periodSeconds: 30
+    timeoutSeconds: 5
+    failureThreshold: 3
+
+  readinessProbe:
+    httpGet:
+      path: /
+      port: 8080
+    initialDelaySeconds: 3
+    periodSeconds: 10
+    timeoutSeconds: 3
+    failureThreshold: 3
+
+  tmpVolumeSizeLimit: 50Mi
+
+# ---- Database ----
+postgresql:
+  enabled: false           # Enable for multi-replica AKS production
+  host: ""
+  port: 5432
+  database: excalidash
+  username: excalidash
+  password: ""             # Use CSI secret or set via --set
+  # For production, prefer Azure Database for PostgreSQL Flexible Server
+  # (managed) rather than in-cluster PostgreSQL.
+
+# ---- Database Migration Job ----
+migration:
+  enabled: true             # Run as Helm pre-install/pre-upgrade hook
+  image:
+    registry: registry1.dso.mil
+    repository: ironbank/opensource/nodejs/nodejs-slim/nodejs22-slim
+    tag: latest
+    pullPolicy: IfNotPresent
+
+  # Backoff limits for migration job
+  backoffLimit: 3
+  ttlSecondsAfterFinished: 300  # Clean up after 5 minutes
+
+  securityContext:
+    allowPrivilegeEscalation: false
+    runAsNonRoot: true
+    runAsUser: 1000
+    capabilities:
+      drop: ["ALL"]
+
+  resources:
+    requests:
+      cpu: 250m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+# ---- Ingress ----
+ingress:
+  enabled: false           # Set to true in production override
+  className: ""            # e.g., nginx, webapprouting.kubernetes.azure.com
+  annotations: {}
+    # cert-manager.io/cluster-issuer: letsencrypt-prod
+    # nginx.ingress.kubernetes.io/ssl-redirect: "true"
+  hosts:
+    - host: excalidash.local
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+
+# ---- Network Policy ----
+networkPolicy:
+  enabled: false           # Set to true in production
+  backend:
+    ingressFromFrontend: true   # Only frontend pods can reach backend
+    egressDns: false            # Allow DNS resolution for OIDC/update checks
+  frontend:
+    ingressFromIngress: false   # Allow ingress-controller namespace
+
+# ---- Service Account ----
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+  # CSI driver may need workload identity annotations:
+  # azure.workload.identity/client-id: "<managed-identity-client-id>"
+
+# ---- Pod Disruption Budget ----
+podDisruptionBudget:
+  enabled: false
+  minAvailable: 1
+
+# ---- Common node selectors and tolerations ----
+nodeSelector: {}
+tolerations: []
+affinity: {}

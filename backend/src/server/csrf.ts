@@ -205,9 +205,6 @@ export const registerCsrfProtection = ({
   };
 
   app.use((req, res, next) => {
-    if (req.path.startsWith("/auth/")) {
-      return next();
-    }
     csrfProtectionMiddleware(req, res, next);
   });
 };

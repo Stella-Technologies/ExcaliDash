@@ -120,7 +120,8 @@ export const issueBootstrapSetupCodeIfRequired = async (
   });
 
   console.log(
-    `[BOOTSTRAP SETUP] One-time admin setup code (${reason}): ${code} (expires ${expiresAt.toISOString()})`
+    `[BOOTSTRAP SETUP] Admin setup code issued (${reason}) — expires ${expiresAt.toISOString()}. ` +
+    `Code hash: ${codeHash.slice(0, 8)}... Code is not logged for security.`
   );
 
   return { issued: true, code, expiresAt };

@@ -1,22 +1,35 @@
 #!/bin/sh
-# Alpine-based image uses /bin/sh (busybox ash), not bash
+# ============================================
+# ExcaliDash Frontend Init Script
+# ============================================
+# This runs as part of the nginx entrypoint sequence
+# (/docker-entrypoint.d/40-excalidash-config.sh).
+# The nginx entrypoint runs all .sh files in /docker-entrypoint.d/
+# alphabetically, then executes CMD (nginx).
+#
+# This script:
+#  1. Reads BACKEND_URL env var
+#  2. Substitutes __BACKEND_URL__ in the nginx config template
+#  3. Validates the generated config with `nginx -t`
+#  4. Must succeed — if it fails, the entrypoint will exit
+#
 set -e
 
-# Set default backend URL if not provided (host:port format, no protocol)
-export BACKEND_URL="${BACKEND_URL:-backend:8000}"
+BACKEND_URL="${BACKEND_URL:-excalidash-backend:8000}"
+echo "[excalidash] Backend URL: ${BACKEND_URL}"
 
-echo "Configuring nginx with BACKEND_URL: ${BACKEND_URL}"
+# Escape sed-special characters in the backend URL
+ESCAPED_URL="$(printf '%s\n' "${BACKEND_URL}" | sed 's/[\/&]/\\&/g')"
 
-# Replace only our custom placeholder and preserve nginx runtime vars like $http_upgrade
-ESCAPED_BACKEND_URL=$(printf '%s\n' "$BACKEND_URL" | sed 's/[\/&]/\\&/g')
-sed "s/__BACKEND_URL__/${ESCAPED_BACKEND_URL}/g" /etc/nginx/nginx.conf.template > /etc/nginx/nginx.conf
+# Generate final nginx config from template
+sed "s/__BACKEND_URL__/${ESCAPED_URL}/g" \
+    /etc/nginx/nginx.conf.template > /etc/nginx/nginx.conf
 
-# Validate the generated nginx configuration before starting
-echo "Validating nginx configuration..."
+# Validate before starting nginx
+echo "[excalidash] Validating nginx configuration..."
 if ! nginx -t -c /etc/nginx/nginx.conf; then
-    echo "ERROR: nginx configuration validation failed" >&2
+    echo "[excalidash] FATAL: nginx config validation failed" >&2
     exit 1
 fi
 
-# Execute the main command (nginx)
-exec "$@"
+echo "[excalidash] nginx config OK"

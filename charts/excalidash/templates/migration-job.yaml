@@ -1,0 +1,79 @@
+{{- if .Values.migration.enabled }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "excalidash.migrationJobName" . }}-{{ .Release.Revision }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "excalidash.labels" . | nindent 4 }}
+    app.kubernetes.io/component: migration
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "-5"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: {{ .Values.migration.backoffLimit }}
+  ttlSecondsAfterFinished: {{ .Values.migration.ttlSecondsAfterFinished }}
+  template:
+    metadata:
+      labels:
+        {{- include "excalidash.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: migration
+    spec:
+      restartPolicy: Never
+      serviceAccountName: {{ include "excalidash.serviceAccountName" . }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.migration.securityContext | nindent 8 }}
+      containers:
+        - name: migration
+          image: "{{ .Values.migration.image.registry }}/{{ .Values.migration.image.repository }}:{{ .Values.migration.image.tag }}"
+          imagePullPolicy: {{ .Values.migration.image.pullPolicy }}
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -e
+              echo "[migration] Running Prisma migrations..."
+              echo "[migration] Provider: ${DATABASE_PROVIDER}"
+              echo "[migration] Database URL: $(echo ${DATABASE_URL} | sed 's/:[^:@]*@/:****@/')"
+
+              # Swap provider in schema if PostgreSQL (Prisma does not support env() in provider field)
+              if [ "${DATABASE_PROVIDER}" != "sqlite" ]; then
+                echo "[migration] Switching provider to ${DATABASE_PROVIDER}..."
+                sed -i '/datasource db {/,/}/ s/provider = "[^"]*"/provider = "'"${DATABASE_PROVIDER}"'"/' /app/prisma/schema.prisma
+                echo "[migration] Regenerating Prisma client for ${DATABASE_PROVIDER}..."
+                npx prisma generate --schema=/app/prisma/schema.prisma
+              fi
+
+              npx prisma migrate deploy --schema=/app/prisma/schema.prisma
+              echo "[migration] Migrations complete."
+          envFrom:
+            - configMapRef:
+                name: {{ include "excalidash.fullname" . }}-backend-config
+          {{- if .Values.backend.secretProvider.enabled }}
+            - secretRef:
+                name: {{ include "excalidash.backend.fullname" . }}-secrets
+          {{- end }}
+          resources:
+            {{- toYaml .Values.migration.resources | nindent 12 }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+        {{- if and (not .Values.postgresql.enabled) .Values.backend.persistence.enabled }}
+            - name: data
+              mountPath: /app/prisma
+        {{- end }}
+      volumes:
+        - name: tmp
+          emptyDir:
+            sizeLimit: 100Mi
+        {{- if and (not .Values.postgresql.enabled) .Values.backend.persistence.enabled }}
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ include "excalidash.backend.fullname" . }}-data
+        {{- end }}
+{{- end }}

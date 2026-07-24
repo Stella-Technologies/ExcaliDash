@@ -1,0 +1,77 @@
+{{- if .Values.networkPolicy.enabled }}
+---
+# Default deny all ingress traffic in the namespace
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "excalidash.fullname" . }}-deny-all
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "excalidash.labels" . | nindent 4 }}
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+---
+# Allow frontend pods to reach backend on port 8000
+{{- if .Values.networkPolicy.backend.ingressFromFrontend }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "excalidash.backend.fullname" . }}-allow
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "excalidash.labels" . | nindent 4 }}
+    app.kubernetes.io/component: backend
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: backend
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: frontend
+      ports:
+        - port: 8000
+          protocol: TCP
+---
+# Allow frontend pods to be reached from ingress-controller namespace
+# and allow DNS egress
+{{- end }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "excalidash.frontend.fullname" . }}-allow
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "excalidash.labels" . | nindent 4 }}
+    app.kubernetes.io/component: frontend
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: frontend
+  policyTypes:
+    - Ingress
+    {{- if or .Values.networkPolicy.backend.egressDns .Values.networkPolicy.frontend.ingressFromIngress }}
+    - Egress
+    {{- end }}
+  ingress:
+    - from:
+        - namespaceSelector: {}
+      ports:
+        - port: 8080
+          protocol: TCP
+  egress:
+    {{- if .Values.networkPolicy.backend.egressDns }}
+    - to:
+        - namespaceSelector: {}     # Allow DNS to kube-dns
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    {{- end }}
+{{- end }}

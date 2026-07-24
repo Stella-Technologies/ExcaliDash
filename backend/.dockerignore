@@ -5,6 +5,12 @@ dist
 .gitignore
 *.md
 .env
+.env.*
+*.pem
+*.key
+*.p12
+*.pfx
+.npmrc
 .DS_Store
 *.log
 prisma/dev.db
